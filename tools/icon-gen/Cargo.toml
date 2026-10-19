@@ -1,0 +1,11 @@
+# Standalone: neither the app workspace nor the one above it should build this.
+[workspace]
+
+[package]
+name = "icon-gen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+ico = "0.6"

@@ -1,0 +1,7 @@
+/target
+/tools/icon-gen/target
+**/*.rs.bk
+*.pdb
+*.ilk
+.DS_Store
+Thumbs.db
