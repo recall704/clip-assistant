@@ -21,6 +21,32 @@ target/release/clipassistant.exe
   `Ctrl+1..9` 快速粘贴全部历史的前 9 条，直接打字即搜索，Esc 关闭。
 - 托盘图标左键切换面板，右键打开菜单。
 
+## 运行时依赖
+
+| 依赖 | 说明 |
+| --- | --- |
+| Windows 10 / 11（x64） | 需要 DirectComposition、DirectWrite、ICU（`icuuc.dll`，1703 起随系统提供） |
+| DirectX 11（`d3d11.dll` / `dxgi.dll`） | GPUI 渲染；显卡驱动不可用时会退回 WARP 软件渲染 |
+| VC++ 2015–2022 运行库 x64（`VCRUNTIME140.dll`） | Rust 默认动态链接 CRT，这是唯一不在 Windows 里的依赖 |
+
+`VCRUNTIME140.dll` 在多数机器上已随其它软件装好；全新系统上缺失时程序无法启动，会提示
+找不到该 DLL。发布流水线（`.github/workflows/build.yml`）用
+`RUSTFLAGS=-C target-feature=+crt-static` 构建，把 CRT 静态链进 exe，所以 CI 产出的
+单文件 exe 和 MSI 都不再依赖它；本机普通 `cargo build --release` 仍然是动态 CRT。
+
+## 发布
+
+推送 `v*` 标签会触发 GitHub Actions，把两个产物附到对应的 Release：
+
+| 产物 | 说明 |
+| --- | --- |
+| `clipassistant.exe` | 免安装单文件，直接运行 |
+| `clipassistant-<version>-x64.msi` | 每用户安装包（装到 `%LOCALAPPDATA%\Programs\ClipAssistant`，不需要管理员权限），带开始菜单和桌面快捷方式 |
+
+任意分支推送和 PR 也会跑同样的构建，产物放在 Actions 的 artifact 里。MSI 用
+`installer/clipassistant.wxs`（WiX Toolset v3）描述。
+
+
 ## 数据位置
 
 | 内容 | 路径 |

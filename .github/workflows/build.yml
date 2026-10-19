@@ -1,0 +1,100 @@
+name: build
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Windows x64 (exe + msi)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      CARGO_TERM_COLOR: always
+      # 静态链接 CRT：产物不依赖 VCRUNTIME140.dll，离线单文件可直接运行。
+      RUSTFLAGS: -C target-feature=+crt-static
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-x64-release
+
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked -p clipassistant-app
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $raw = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $nums = @([regex]::Matches($raw, '\d+') | ForEach-Object Value)
+          while ($nums.Count -lt 3) { $nums += '0' }
+          $version = "$($nums[0]).$($nums[1]).$($nums[2])"
+          "value=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Ensure WiX Toolset
+        shell: pwsh
+        run: |
+          $bin = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset v3*\bin\candle.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $bin) {
+            choco install wixtoolset --no-progress -y
+            $bin = Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset v3*\bin\candle.exe" -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+          }
+          if (-not $bin) { throw 'WiX Toolset v3 not found' }
+          $bin.Directory.FullName >> $env:GITHUB_PATH
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force target\wix | Out-Null
+          candle -nologo -arch x64 `
+            "-dVersion=${{ steps.version.outputs.value }}" `
+            "-dReleaseDir=$PWD\target\release" `
+            "-dRepoDir=$PWD" `
+            -out target\wix\ installer\clipassistant.wxs
+          light -nologo -sval `
+            -out "target\wix\clipassistant-${{ steps.version.outputs.value }}-x64.msi" `
+            target\wix\clipassistant.wixobj
+
+      - name: List outputs
+        shell: pwsh
+        run: |
+          Get-Item target\release\clipassistant.exe | Select-Object Name, Length
+          Get-Item target\wix\*.msi | Select-Object Name, Length
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipassistant-${{ steps.version.outputs.value }}-x64
+          path: |
+            target/release/clipassistant.exe
+            target/wix/*.msi
+          if-no-files-found: error
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/clipassistant.exe
+            target/wix/*.msi
+          generate_release_notes: true
