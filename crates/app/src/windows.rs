@@ -5,8 +5,8 @@
 
 use crate::ui::{panel::PanelView, settings::SettingsView, update::UpdateView};
 use gpui::{
-    px, App, AppContext as _, Bounds, Context, Window, WindowBackgroundAppearance, WindowHandle,
-    WindowKind, WindowOptions,
+    px, App, AppContext as _, Bounds, Context, DisplayId, Window, WindowBackgroundAppearance,
+    WindowHandle, WindowKind, WindowOptions,
 };
 use clipassistant_core::layout::{self, Rect};
 use std::sync::Mutex;
@@ -38,9 +38,20 @@ fn bounds_of(r: Rect) -> Bounds<gpui::Pixels> {
     }
 }
 
-fn panel_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
+/// A GPUI display rectangle in the same integer units as [`Rect`].
+fn rect_of(bounds: Bounds<gpui::Pixels>) -> Rect {
+    Rect {
+        x: f32::from(bounds.origin.x).round() as i32,
+        y: f32::from(bounds.origin.y).round() as i32,
+        w: f32::from(bounds.size.width).round() as i32,
+        h: f32::from(bounds.size.height).round() as i32,
+    }
+}
+
+fn panel_options(bounds: Bounds<gpui::Pixels>, display: Option<DisplayId>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+        display_id: display,
         titlebar: None,
         kind: WindowKind::PopUp,
         window_background: WindowBackgroundAppearance::Transparent,
@@ -52,9 +63,10 @@ fn panel_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
     }
 }
 
-fn dialog_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
+fn dialog_options(bounds: Bounds<gpui::Pixels>, display: Option<DisplayId>) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+        display_id: display,
         titlebar: None,
         kind: WindowKind::Normal,
         is_resizable: false,
@@ -81,7 +93,7 @@ pub fn toggle_panel(cx: &mut App) {
 ///
 /// Win32 reports monitor rectangles in physical pixels; GPUI expects logical
 /// pixels, so the physical rectangle is divided by that display's scale factor.
-fn logical_monitor_for_cursor(_cx: &App) -> Rect {
+fn logical_monitor_at_cursor() -> Rect {
     let physical = layout::monitor_bounds_at_cursor();
     let scale = layout::monitor_scale_at_cursor();
     if scale <= 0.0 || (scale - 1.0).abs() < f32::EPSILON {
@@ -92,6 +104,39 @@ fn logical_monitor_for_cursor(_cx: &App) -> Rect {
         y: (physical.y as f32 / scale).round() as i32,
         w: (physical.w as f32 / scale).round() as i32,
         h: (physical.h as f32 / scale).round() as i32,
+    }
+}
+
+/// Monitor under the mouse pointer as the window layer sees it.
+struct CursorMonitor {
+    /// Logical rectangle, taken from GPUI's own display rather than recomputed.
+    bounds: Rect,
+    /// Display the window must be created on; `None` only when the pointer is
+    /// on a monitor GPUI does not list.
+    display: Option<DisplayId>,
+}
+
+/// Resolve the monitor under the pointer to a GPUI display.
+///
+/// The display id is not cosmetic: GPUI creates a window on the primary display
+/// when it is missing, and then discards the requested bounds when they do not
+/// land on that display (its Windows backend falls back to `default_bounds` in
+/// `retrieve_window_placement`). That is what used to turn a panel asked to
+/// dock on a secondary monitor into a centred default-sized window on the
+/// primary one.
+fn cursor_monitor(cx: &App) -> CursorMonitor {
+    let physical = logical_monitor_at_cursor();
+    let displays = cx.displays();
+    let monitors: Vec<Rect> = displays.iter().map(|d| rect_of(d.bounds())).collect();
+    match layout::monitor_index_of(&monitors, physical) {
+        Some(index) => CursorMonitor {
+            bounds: monitors[index],
+            display: Some(displays[index].id()),
+        },
+        None => CursorMonitor {
+            bounds: physical,
+            display: None,
+        },
     }
 }
 
@@ -159,10 +204,15 @@ pub fn show_panel(cx: &mut App) {
         .settings()
         .clipboard
         .layout;
-    let rect = layout::panel_geometry_in(logical_monitor_for_cursor(cx), layout);
-    log::debug!("面板停靠位置(逻辑像素): {rect:?}");
+    let monitor = cursor_monitor(cx);
+    let rect = layout::panel_geometry_in(monitor.bounds, layout);
+    log::debug!(
+        "面板停靠位置(逻辑像素): {rect:?} display={:?}",
+        monitor.display.map(u32::from)
+    );
     clipassistant_core::paste::save_foreground_handle();
-    if let Ok(handle) = cx.open_window(panel_options(bounds_of(rect)), |window, cx| {
+    let options = panel_options(bounds_of(rect), monitor.display);
+    if let Ok(handle) = cx.open_window(options, |window, cx| {
         remember_panel_hwnd(window);
         cx.new(|cx| PanelView::new(window, cx))
     }) {
@@ -233,9 +283,8 @@ pub fn hide_panel(cx: &mut App) {
     *PANEL_SHOWN_AT.lock().unwrap() = None;
 }
 
-/// Centre a fixed-size dialog on the monitor under the cursor.
-fn centered_dialog(cx: &App, w: i32, h: i32) -> Rect {
-    let monitor = logical_monitor_for_cursor(cx);
+/// Centre a fixed-size dialog inside a monitor rectangle.
+fn centered_in(monitor: Rect, w: i32, h: i32) -> Rect {
     Rect {
         x: monitor.x + (monitor.w - w) / 2,
         y: monitor.y + (monitor.h - h) / 2,
@@ -283,8 +332,10 @@ pub fn open_settings(cx: &mut App) {
         with_registry(cx, |w| w.settings = Some(handle));
         return;
     }
-    let rect = centered_dialog(cx, 810, 580);
-    if let Ok(handle) = cx.open_window(dialog_options(bounds_of(rect)), |window, cx| {
+    let monitor = cursor_monitor(cx);
+    let rect = centered_in(monitor.bounds, 810, 580);
+    let options = dialog_options(bounds_of(rect), monitor.display);
+    if let Ok(handle) = cx.open_window(options, |window, cx| {
         cx.new(|cx| SettingsView::new(window, cx))
     }) {
         with_registry(cx, |w| w.settings = Some(handle));
@@ -316,8 +367,9 @@ pub fn open_update(cx: &mut App) {
     if with_registry(cx, |w| w.update.is_some()) {
         return;
     }
-    let rect = centered_dialog(cx, 320, 320);
-    let mut options = dialog_options(bounds_of(rect));
+    let monitor = cursor_monitor(cx);
+    let rect = centered_in(monitor.bounds, 320, 320);
+    let mut options = dialog_options(bounds_of(rect), monitor.display);
     options.kind = WindowKind::PopUp;
     if let Ok(handle) = cx.open_window(options, |window, cx| {
         cx.new(|cx| UpdateView::new(window, cx))

@@ -106,6 +106,30 @@ pub fn panel_size(layout: Layout) -> (i32, i32) {
     (g.w, g.h)
 }
 
+/// Tolerance, in logical pixels, when comparing two rectangles that describe
+/// the same monitor but were rounded by different layers.
+const MONITOR_MATCH_TOLERANCE: i32 = 2;
+
+/// Whether two logical rectangles describe the same monitor.
+///
+/// The windowing layer reports a display as its physical rectangle divided by
+/// that display's scale factor without rounding; [`Rect`] rounds. The two
+/// descriptions of one monitor can therefore be a pixel apart.
+fn monitors_match(a: Rect, b: Rect) -> bool {
+    let near = |l: i32, r: i32| (l - r).abs() <= MONITOR_MATCH_TOLERANCE;
+    near(a.x, b.x) && near(a.y, b.y) && near(a.w, b.w) && near(a.h, b.h)
+}
+
+/// Position of `target` in a list of monitor rectangles.
+///
+/// Callers pass the windowing layer's own display list together with the
+/// rectangle they derived from Win32 data; the index lets them recover that
+/// layer's handle for the monitor (GPUI, for one, needs its `DisplayId` before
+/// it accepts bounds that are not on the primary display).
+pub fn monitor_index_of(monitors: &[Rect], target: Rect) -> Option<usize> {
+    monitors.iter().position(|m| monitors_match(*m, target))
+}
+
 /// Centre a window of `w`x`h` on the monitor under the cursor.
 pub fn centered(w: i32, h: i32) -> Rect {
     let b = monitor_bounds_at_cursor();
@@ -133,5 +157,30 @@ mod tests {
         let g = panel_geometry(Layout::Vertical);
         assert_eq!(g.w, PANEL_VERTICAL_WIDTH);
         assert_eq!(g.x + g.w, monitor_bounds_at_cursor().x + monitor_bounds_at_cursor().w);
+    }
+
+    #[test]
+    fn monitor_index_tolerates_rounding() {
+        let primary = Rect { x: 0, y: 0, w: 1707, h: 1067 };
+        let secondary = Rect { x: -417, y: -1440, w: 2560, h: 1440 };
+        let monitors = [primary, secondary];
+
+        assert_eq!(monitor_index_of(&monitors, secondary), Some(1));
+        // The same monitor as the windowing layer describes it: the fractional
+        // physical/scale division rounded a pixel the other way.
+        assert_eq!(
+            monitor_index_of(&monitors, Rect { x: -418, y: -1441, w: 2559, h: 1439 }),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn monitor_index_is_none_for_unknown_rect() {
+        let monitors = [Rect { x: 0, y: 0, w: 1920, h: 1080 }];
+        assert_eq!(
+            monitor_index_of(&monitors, Rect { x: 1920, y: 0, w: 1920, h: 1080 }),
+            None
+        );
+        assert_eq!(monitor_index_of(&[], monitors[0]), None);
     }
 }
