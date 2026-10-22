@@ -76,6 +76,76 @@ fn dialog_options(bounds: Bounds<gpui::Pixels>, display: Option<DisplayId>) -> W
     }
 }
 
+// ---------------------------------------------------------------- dragging
+
+/// The raw Win32 handle behind a GPUI window.
+fn window_hwnd(window: &Window) -> Option<windows::Win32::Foundation::HWND> {
+    let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
+    let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return None;
+    };
+    Some(windows::Win32::Foundation::HWND(win32.hwnd.get() as *mut _))
+}
+
+/// Follow the mouse and move `window` until the left button is released.
+///
+/// GPUI has no Windows backend for `Window::start_window_move`, and the usual
+/// Win32 shortcut (`WM_NCLBUTTONDOWN` with `HTCAPTION`, or `SetWindowPos` from a
+/// mouse-move handler) re-enters the app: `SetWindowPos` delivers `WM_MOVE`
+/// synchronously, and GPUI handles it while the app is still borrowed
+/// ("RefCell already borrowed"). Running the move on its own thread lets those
+/// messages arrive through the normal message pump instead.
+pub fn begin_window_drag(window: &Window) {
+    let Some(hwnd) = window_hwnd(window) else {
+        return;
+    };
+    let raw = hwnd.0 as isize;
+    if let Err(err) = std::thread::Builder::new()
+        .name("window-drag".into())
+        .spawn(move || drag_loop(raw))
+    {
+        log::warn!("无法启动窗口拖动: {err}");
+    }
+}
+
+fn drag_loop(raw: isize) {
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetWindowRect, IsWindow, SetWindowPos, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
+        SWP_NOSIZE, SWP_NOZORDER,
+    };
+
+    let hwnd = HWND(raw as *mut _);
+    unsafe {
+        let mut cursor = POINT::default();
+        let mut rect = RECT::default();
+        if GetCursorPos(&mut cursor).is_err() || GetWindowRect(hwnd, &mut rect).is_err() {
+            return;
+        }
+        let start = (cursor.x, cursor.y, rect.left, rect.top);
+        loop {
+            if GetAsyncKeyState(VK_LBUTTON.0 as i32) >= 0 || !IsWindow(Some(hwnd)).as_bool() {
+                break;
+            }
+            if GetCursorPos(&mut cursor).is_ok() {
+                let x = start.2 + (cursor.x - start.0);
+                let y = start.3 + (cursor.y - start.1);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    x,
+                    y,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+    }
+}
+
 // ------------------------------------------------------------------- panel
 
 /// Show or hide the clipboard panel.
@@ -353,11 +423,19 @@ pub fn open_settings(cx: &mut App) {
     }
 }
 
+/// Close the settings window.
+///
+/// The button that calls this lives in the window's own view, so the app is
+/// still inside that window's update: `cx.windows` holds no entry for it and
+/// `WindowHandle::update` would fail with "window not found". The removal is
+/// therefore deferred until the current update has finished.
 pub fn close_settings(cx: &mut App) {
     if let Some(handle) = with_registry(cx, |w| w.settings.take()) {
-        handle
-            .update(cx, |_, window, _| window.remove_window())
-            .ok();
+        cx.defer(move |cx| {
+            handle
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+        });
     }
 }
 
@@ -378,10 +456,14 @@ pub fn open_update(cx: &mut App) {
     }
 }
 
+/// Close the update dialog. Deferred for the same reason as
+/// [`close_settings`]: its own view requests the close.
 pub fn close_update(cx: &mut App) {
     if let Some(handle) = with_registry(cx, |w| w.update.take()) {
-        handle
-            .update(cx, |_, window, _| window.remove_window())
-            .ok();
+        cx.defer(move |cx| {
+            handle
+                .update(cx, |_, window, _| window.remove_window())
+                .ok();
+        });
     }
 }

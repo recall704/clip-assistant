@@ -9,8 +9,8 @@ use crate::actions;
 use crate::state::{prune_history, AppState};
 use crate::windows;
 use gpui::{
-    div, prelude::*, px, AnyElement, App, Context, Entity, FocusHandle, KeyDownEvent, Render,
-    SharedString, Window,
+    div, prelude::*, px, AnyElement, App, Context, Entity, FocusHandle, KeyDownEvent,
+    MouseButton, MouseDownEvent, Render, SharedString, Window,
 };
 use clipassistant_core::model::ContentType;
 use clipassistant_core::settings::{HistoryCache, Layout, SoundInfo, Theme};
@@ -431,53 +431,66 @@ impl SettingsView {
                         },
                     ),
                 ),
-                widgets::field(
-                    "快速粘贴前缀",
-                    palette,
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap(px(6.))
-                        .children(
-                            prefixes
-                                .iter()
-                                .map(|p| {
-                                    let p = p.clone();
-                                    let selected = hotkeys.quick_paste == p;
-                                    div()
-                                        .id(SharedString::from(format!("qp-{p}")))
-                                        .px(px(8.))
-                                        .py(px(3.))
-                                        .rounded(px(6.))
-                                        .text_size(px(11.))
-                                        .cursor_pointer()
-                                        .when(selected, |d| {
-                                            d.bg(palette.primary).text_color(palette.primary_fg)
-                                        })
-                                        .when(!selected, |d| {
-                                            d.bg(palette.input).text_color(palette.font)
-                                        })
-                                        .child(SharedString::from(p.clone()))
-                                        .on_click(cx.listener(
-                                            move |_this, _: &gpui::ClickEvent, _window, cx| {
-                                                let value = p.clone();
-                                                cx.defer(move |cx| {
-                                                    actions::set_quick_paste(cx, &value)
-                                                });
-                                            },
-                                        ))
-                                        .into_any_element()
-                                })
-                                .collect::<Vec<_>>(),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(palette.muted)
-                                .child("+ 数字1～9"),
-                        )
-                        .into_any_element(),
-                ),
+                // The prefix chips are wider than a `field` row leaves next to the
+                // label, so the label sits above a wrapping row instead.
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .w_full()
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(palette.font)
+                            .child("快速粘贴前缀"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .gap(px(6.))
+                            .w_full()
+                            .children(
+                                prefixes
+                                    .iter()
+                                    .map(|p| {
+                                        let p = p.clone();
+                                        let selected = hotkeys.quick_paste == p;
+                                        div()
+                                            .id(SharedString::from(format!("qp-{p}")))
+                                            .px(px(8.))
+                                            .py(px(3.))
+                                            .rounded(px(6.))
+                                            .text_size(px(11.))
+                                            .cursor_pointer()
+                                            .when(selected, |d| {
+                                                d.bg(palette.primary).text_color(palette.primary_fg)
+                                            })
+                                            .when(!selected, |d| {
+                                                d.bg(palette.input).text_color(palette.font)
+                                            })
+                                            .child(SharedString::from(p.clone()))
+                                            .on_click(cx.listener(
+                                                move |_this, _: &gpui::ClickEvent, _window, cx| {
+                                                    let value = p.clone();
+                                                    cx.defer(move |cx| {
+                                                        actions::set_quick_paste(cx, &value)
+                                                    });
+                                                },
+                                            ))
+                                            .into_any_element()
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(palette.muted)
+                                    .child("+ 数字1～9"),
+                            ),
+                    )
+                    .into_any_element(),
             ],
         );
 
@@ -767,23 +780,41 @@ impl Render for SettingsView {
                     .h(px(56.))
                     .px(px(18.))
                     .child(
+                        // The header is this frameless window's title bar:
+                        // dragging it moves the window. The buttons sit
+                        // outside this area so their clicks stay intact.
                         div()
+                            .id("settings-titlebar")
                             .flex()
                             .flex_row()
-                            .items_baseline()
-                            .gap(px(6.))
+                            .items_center()
+                            .flex_1()
+                            .h_full()
                             .child(
                                 div()
-                                    .text_size(px(16.))
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(palette.primary)
-                                    .child(clipassistant_core::APP_NAME),
+                                    .flex()
+                                    .flex_row()
+                                    .items_baseline()
+                                    .gap(px(6.))
+                                    .child(
+                                        div()
+                                            .text_size(px(16.))
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .text_color(palette.primary)
+                                            .child(clipassistant_core::APP_NAME),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(palette.muted)
+                                            .child(concat!("v", env!("CARGO_PKG_VERSION"))),
+                                    ),
                             )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(palette.muted)
-                                    .child(concat!("v", env!("CARGO_PKG_VERSION"))),
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|_this, _: &MouseDownEvent, window, _cx| {
+                                    windows::begin_window_drag(window);
+                                }),
                             ),
                     )
                     .child(
