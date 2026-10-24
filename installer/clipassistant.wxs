@@ -54,12 +54,11 @@
           <!-- 必须是普通（非广告）快捷方式。Advertise="yes" 写出的 .lnk 没有真实
                Target，Explorer 得先让 Windows Installer 解析广告描述符、再从 MSI
                的 Icon 流里取图标，这一步在不少机器上失败，桌面就只剩白纸图标。
-               显式 Target + Icon 的写法和下面开始菜单那条一致，图标能正常显示。 -->
+               去掉 Advertise 后 WiX 会把父 File 作为目标，和开始菜单那条一致。 -->
           <Shortcut Id="DesktopShortcut"
                     Directory="DesktopFolder"
                     Name="剪贴助手"
                     Description="剪贴助手 — 剪贴板历史工具"
-                    Target="[INSTALLFOLDER]clipassistant.exe"
                     WorkingDirectory="INSTALLFOLDER"
                     Icon="AppIcon" />
         </File>
