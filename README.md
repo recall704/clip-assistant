@@ -1,12 +1,10 @@
 # 剪贴助手 · ClipAssistant
 
-Windows 上的剪贴板历史工具：热键唤出面板，`Ctrl+1..9` 直接粘贴，支持文本 / 图片 /
-链接 / 文件 / 文件夹五类内容，分组管理、搜索、粘贴后自动置顶、托盘常驻。数据全部保存在
-本地，离线可用。
+clip-assistant 是一个由 AI 编写完成的 windows 版剪切工具，使用 Rust + [GPUI](https://gpui.rs/) 实现。  
+类似 MacOS 上的 Paste，代码开源可供审计，二进制由 CI 构建而成。
 
-整个应用是一个 Rust 进程：界面用 [GPUI](https://gpui.rs/)（Zed 的 GPU 加速 UI 框架），
-剪贴板监听 / 读写、全局热键、粘贴、托盘、音效都用 Win32 API 在进程内完成，不再需要
-Electron 时代的辅助 exe。
+![](./images/preview.png)
+
 
 ## 快速开始
 
