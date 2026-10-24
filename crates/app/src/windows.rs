@@ -363,6 +363,82 @@ fn centered_in(monitor: Rect, w: i32, h: i32) -> Rect {
     }
 }
 
+/// Shrink a dialog to fit inside a monitor, keeping a small margin.
+fn fitted_size(monitor: Rect, w: i32, h: i32) -> (i32, i32) {
+    const MARGIN: i32 = 48;
+    (
+        w.min((monitor.w - MARGIN).max(1)),
+        h.min((monitor.h - MARGIN).max(1)),
+    )
+}
+
+/// Cursor position relative to `monitor`, in logical pixels.
+///
+/// Win32 reports the pointer in physical pixels, so the offset inside the
+/// monitor is divided by its scale factor before being added to the logical
+/// rectangle GPUI uses.
+fn cursor_in_monitor(monitor: Rect) -> (i32, i32) {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    let mut cursor = POINT::default();
+    if unsafe { GetCursorPos(&mut cursor) }.is_err() {
+        return (monitor.x + monitor.w / 2, monitor.y + monitor.h / 2);
+    }
+    let physical = layout::monitor_bounds_at_cursor();
+    let scale = layout::monitor_scale_at_cursor();
+    if scale <= 0.0 {
+        return (monitor.x + monitor.w / 2, monitor.y + monitor.h / 2);
+    }
+    (
+        monitor.x + ((cursor.x - physical.x) as f32 / scale).round() as i32,
+        monitor.y + ((cursor.y - physical.y) as f32 / scale).round() as i32,
+    )
+}
+
+/// Place a dialog beside an anchor (the click position), opening towards the
+/// side of the monitor with more room and staying fully inside it.
+fn anchored_in(monitor: Rect, anchor: (i32, i32), w: i32, h: i32) -> Rect {
+    const MARGIN: i32 = 12;
+    const GAP: i32 = 10;
+
+    let (w, h) = fitted_size(monitor, w, h);
+    let left_room = anchor.0 - monitor.x;
+    let right_room = monitor.x + monitor.w - anchor.0;
+    let x = if left_room >= w + GAP + MARGIN {
+        anchor.0 - w - GAP
+    } else if right_room >= w + GAP + MARGIN {
+        anchor.0 + GAP
+    } else if left_room >= right_room {
+        anchor.0 - w - GAP
+    } else {
+        anchor.0 + GAP
+    };
+
+    let top_room = anchor.1 - monitor.y;
+    let bottom_room = monitor.y + monitor.h - anchor.1;
+    let y = if top_room >= h + GAP + MARGIN {
+        anchor.1 - h - GAP
+    } else if bottom_room >= h + GAP + MARGIN {
+        anchor.1 + GAP
+    } else if top_room >= bottom_room {
+        anchor.1 - h - GAP
+    } else {
+        anchor.1 + GAP
+    };
+
+    let min_x = monitor.x + MARGIN;
+    let max_x = (monitor.x + monitor.w - w - MARGIN).max(min_x);
+    let min_y = monitor.y + MARGIN;
+    let max_y = (monitor.y + monitor.h - h - MARGIN).max(min_y);
+    Rect {
+        x: x.clamp(min_x, max_x),
+        y: y.clamp(min_y, max_y),
+        w,
+        h,
+    }
+}
+
 /// Re-dock the panel after a layout change.
 pub fn redock_panel(cx: &mut App) {
     if let Some(handle) = with_registry(cx, |w| w.panel.take()) {
@@ -395,6 +471,15 @@ pub fn panel_is_open(cx: &App) -> bool {
 // ---------------------------------------------------------------- settings
 
 pub fn open_settings(cx: &mut App) {
+    open_settings_impl(cx, false);
+}
+
+/// Open settings next to the button that was clicked (menu item or tray).
+pub fn open_settings_at_cursor(cx: &mut App) {
+    open_settings_impl(cx, true);
+}
+
+fn open_settings_impl(cx: &mut App, near_cursor: bool) {
     if let Some(handle) = with_registry(cx, |w| w.settings.take()) {
         handle
             .update(cx, |_, window, _| window.activate_window())
@@ -403,7 +488,12 @@ pub fn open_settings(cx: &mut App) {
         return;
     }
     let monitor = cursor_monitor(cx);
-    let rect = centered_in(monitor.bounds, 810, 580);
+    let (w, h) = fitted_size(monitor.bounds, 760, 440);
+    let rect = if near_cursor {
+        anchored_in(monitor.bounds, cursor_in_monitor(monitor.bounds), w, h)
+    } else {
+        centered_in(monitor.bounds, w, h)
+    };
     let options = dialog_options(bounds_of(rect), monitor.display);
     if let Ok(handle) = cx.open_window(options, |window, cx| {
         cx.new(|cx| SettingsView::new(window, cx))

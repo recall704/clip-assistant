@@ -68,9 +68,9 @@ pub fn section(
     div()
         .flex()
         .flex_col()
-        .gap(px(10.))
+        .gap(px(8.))
         .w_full()
-        .p(px(20.))
+        .p(px(16.))
         .rounded(px(12.))
         .bg(palette.surface)
         .child(
@@ -97,7 +97,7 @@ pub fn field(
         .items_center()
         .justify_between()
         .w_full()
-        .py(px(4.))
+        .py(px(3.))
         .child(
             div()
                 .text_size(px(12.))

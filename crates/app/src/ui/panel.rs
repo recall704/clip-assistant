@@ -522,15 +522,23 @@ impl PanelView {
                     .cursor_pointer()
                     .hover(move |s| s.bg(palette.overlay))
                     .child("⋯")
-                    .on_click(cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                        this.menu = Some(Menu::More {
-                            pos: Point {
-                                x: px(0.),
-                                y: px(0.),
-                            },
-                        });
-                        cx.notify();
-                    })),
+                    .on_click(cx.listener(
+                        |this, event: &gpui::ClickEvent, window, cx| {
+                            let pos = event.position();
+                            // Open under the button, aligned to its right edge,
+                            // so the menu does not jump to the window's left.
+                            let left = (pos.x - px(156.))
+                                .min(window.viewport_size().width - px(160.))
+                                .max(px(4.));
+                            this.menu = Some(Menu::More {
+                                pos: Point {
+                                    x: left,
+                                    y: pos.y + px(4.),
+                                },
+                            });
+                            cx.notify();
+                        },
+                    )),
             )
             .into_any_element()
     }
@@ -915,7 +923,7 @@ impl PanelView {
                             palette,
                             |this, _window, cx| {
                                 this.menu = None;
-                                windows::open_settings(cx);
+                                windows::open_settings_at_cursor(cx);
                             },
                             cx,
                         ),

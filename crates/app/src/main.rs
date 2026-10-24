@@ -197,7 +197,7 @@ fn main() {
 fn handle_tray(event: tray::TrayEvent, cx: &mut App) {
     match event {
         tray::TrayEvent::TogglePanel => windows::toggle_panel(cx),
-        tray::TrayEvent::OpenSettings => windows::open_settings(cx),
+        tray::TrayEvent::OpenSettings => windows::open_settings_at_cursor(cx),
         tray::TrayEvent::PreviousGroup => actions::on_hotkey(clipassistant_core::hotkey::ids::PREV_GROUP, cx),
         tray::TrayEvent::NextGroup => actions::on_hotkey(clipassistant_core::hotkey::ids::NEXT_GROUP, cx),
         tray::TrayEvent::Guide => clipassistant_core::winutil::open_with_shell(

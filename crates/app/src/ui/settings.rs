@@ -83,7 +83,7 @@ impl SettingsView {
             .flex_none()
             .w(px(96.))
             .h_full()
-            .py(px(20.))
+            .py(px(18.))
             .gap(px(6.))
             .items_center();
         for (i, name) in TABS.iter().enumerate() {
@@ -310,21 +310,21 @@ impl SettingsView {
         div()
             .flex()
             .flex_row()
-            .gap(px(14.))
+            .gap(px(12.))
             .size_full()
             .children(vec![
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
+                    .gap(px(10.))
                     .flex_1()
                     .child(sound_section)
                     .into_any_element(),
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
-                    .w(px(300.))
+                    .gap(px(10.))
+                    .w(px(280.))
                     .child(theme_section)
                     .child(layout_section)
                     .into_any_element(),
@@ -571,25 +571,26 @@ impl SettingsView {
         div()
             .flex()
             .flex_row()
-            .gap(px(14.))
+            .gap(px(12.))
             .size_full()
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
-                    .w(px(360.))
+                    .gap(px(10.))
+                    .w(px(310.))
                     .child(show_section)
-                    .child(group_section)
-                    .child(quick_section),
+                    .child(group_section),
             )
             .child(
                 div()
                     .flex()
                     .flex_col()
+                    .gap(px(10.))
                     .flex_1()
                     .min_w(px(0.))
-                    .child(appoint_section),
+                    .child(appoint_section)
+                    .child(quick_section),
             )
             .into_any_element()
     }
@@ -732,7 +733,7 @@ impl SettingsView {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.))
+            .gap(px(10.))
             .size_full()
             .child(startup)
             .child(history)
@@ -751,7 +752,7 @@ impl SettingsView {
             .flex_1()
             .min_h(px(0.))
             .min_w(px(0.))
-            .p(px(16.))
+            .p(px(12.))
             .rounded(px(14.))
             .bg(palette.backdrop)
             .overflow_y_scroll()
@@ -777,8 +778,8 @@ impl Render for SettingsView {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .h(px(56.))
-                    .px(px(18.))
+                    .h(px(50.))
+                    .px(px(16.))
                     .child(
                         // The header is this frameless window's title bar:
                         // dragging it moves the window. The buttons sit
@@ -849,7 +850,7 @@ impl Render for SettingsView {
                     .min_h(px(0.))
                     .gap(px(6.))
                     .px(px(10.))
-                    .pb(px(10.))
+                    .pb(px(8.))
                     .child(self.rail(&palette, cx))
                     .child(self.body(&palette, cx)),
             );
@@ -861,7 +862,7 @@ impl Render for SettingsView {
                         .absolute()
                         .left(px(0.))
                         .right(px(0.))
-                        .top(px(64.))
+                        .top(px(56.))
                         .flex()
                         .justify_center()
                         .child(
@@ -962,7 +963,7 @@ fn shortcut_box(
     let on_change = std::rc::Rc::new(on_change);
     div()
         .id(id)
-        .min_w(px(150.))
+        .min_w(px(130.))
         .h(px(26.))
         .px(px(10.))
         .flex()
