@@ -1,6 +1,6 @@
 [package]
 name = "clipassistant-core"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "ClipAssistant core: clipboard capture, storage, settings, hotkeys, paste, platform integration"
 

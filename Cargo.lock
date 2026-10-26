@@ -914,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "clipassistant-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "base64",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "clipassistant-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "base64",
