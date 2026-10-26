@@ -5,10 +5,11 @@
 
 use crate::ui::{panel::PanelView, settings::SettingsView, update::UpdateView};
 use gpui::{
-    px, App, AppContext as _, Bounds, Context, DisplayId, Window, WindowBackgroundAppearance,
-    WindowHandle, WindowKind, WindowOptions,
+    div, prelude::*, px, App, Bounds, Context, DisplayId, Render, Window,
+    WindowBackgroundAppearance, WindowHandle, WindowKind, WindowOptions,
 };
 use clipassistant_core::layout::{self, Rect};
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::Mutex;
 
 #[derive(Default)]
@@ -142,6 +143,160 @@ fn drag_loop(raw: isize) {
                 );
             }
             std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+    }
+}
+
+// -------------------------------------------------------------- keep-alive
+
+/// The invisible window that keeps the process alive while no dialog is open.
+///
+/// GPUI's Windows backend quits the process when its last window is destroyed:
+/// `WM_DESTROY` posts `WM_GPUI_CLOSE_ONE_WINDOW`, and once no window is left
+/// the platform answers with `WM_QUIT`. A tray-resident app therefore needs a
+/// window of its own even though it has nothing to draw.
+///
+/// Drawing nothing is not enough, because the window is still a real top-level
+/// window: GPUI calls `ShowWindow(SW_SHOWNORMAL)` on every window it owns when
+/// the monitor a window was created on disappears
+/// (`handle_display_change_msg`), and a default `WindowKind::Normal` window then
+/// appears as a decorated, fully transparent frame — the ghost window that
+/// showed up after the display layout changed. This one is a caption-less tool
+/// window parked outside the desktop and impossible to activate, so revealing
+/// it can show nothing at all.
+///
+/// It is deliberately not one pixel large: a degenerately small window leaves
+/// GPUI's Direct3D swap chain without a render target (the resize fails, and the
+/// next frame panics on the missing view), so the parking spot keeps a normal,
+/// drawable size.
+struct KeepAlive;
+
+impl Render for KeepAlive {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+/// Parking spot of the keep-alive window, in logical pixels.
+///
+/// Off every monitor, but still large enough for a usable Direct3D surface.
+const KEEPALIVE_RECT: Rect = Rect {
+    x: -32_000,
+    y: -32_000,
+    w: 200,
+    h: 200,
+};
+
+/// HWND of the keep-alive window, remembered when it is created.
+static KEEPALIVE_HWND: AtomicIsize = AtomicIsize::new(0);
+
+/// Window options for the keep-alive window.
+///
+/// Everything here matters: `PopUp` is what removes the caption and the taskbar
+/// button, `titlebar: None` keeps GPUI from drawing one, and the transparent
+/// background means anything it paints stays invisible.
+fn keepalive_options() -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(gpui::WindowBounds::Windowed(bounds_of(KEEPALIVE_RECT))),
+        titlebar: None,
+        kind: WindowKind::PopUp,
+        window_background: WindowBackgroundAppearance::Transparent,
+        is_resizable: false,
+        is_movable: false,
+        is_minimizable: false,
+        focus: false,
+        show: false,
+        ..Default::default()
+    }
+}
+
+/// Open the hidden keep-alive window and park it outside the desktop.
+pub fn open_keepalive(cx: &mut App) {
+    match cx.open_window(keepalive_options(), |window, cx| {
+        remember_keepalive_hwnd(window);
+        cx.new(|_| KeepAlive)
+    }) {
+        Ok(_) => park_keepalive(),
+        Err(err) => log::error!("无法创建常驻窗口: {err}"),
+    }
+}
+
+/// Remember the keep-alive window's HWND. Called from the creation closure.
+fn remember_keepalive_hwnd(window: &Window) {
+    let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    if let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() {
+        KEEPALIVE_HWND.store(win32.hwnd.get() as isize, Ordering::SeqCst);
+    }
+}
+
+/// Move the keep-alive window out of the way and keep it from being activated.
+///
+/// `show: false` leaves the window at `CW_USEDEFAULT`, because GPUI only applies
+/// the requested placement to windows it creates visible, so the position has to
+/// be fixed up with Win32. The call runs on its own thread for the same reason
+/// as [`begin_window_drag`]: `SetWindowPos` delivers `WM_WINDOWPOSCHANGED`
+/// synchronously, and GPUI handles it while the app is still borrowed.
+fn park_keepalive() {
+    let raw = KEEPALIVE_HWND.load(Ordering::SeqCst);
+    if raw == 0 {
+        return;
+    }
+    if let Err(err) = std::thread::Builder::new()
+        .name("keepalive-park".into())
+        .spawn(move || park_keepalive_now(raw))
+    {
+        log::warn!("无法启动常驻窗口线程: {err}");
+    }
+}
+
+fn park_keepalive_now(raw: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_ASYNCWINDOWPOS,
+        SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOZORDER, WS_EX_NOACTIVATE,
+    };
+
+    let hwnd = HWND(raw as *mut _);
+    unsafe {
+        // `SW_SHOWNORMAL` from GPUI's display-change handler would activate the
+        // window and take the foreground away from the user's application.
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE.0 as isize);
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            KEEPALIVE_RECT.x,
+            KEEPALIVE_RECT.y,
+            KEEPALIVE_RECT.w,
+            KEEPALIVE_RECT.h,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW | SWP_ASYNCWINDOWPOS,
+        );
+    }
+}
+
+/// Hide the keep-alive window again after the platform revealed it.
+///
+/// GPUI shows every window it owns on a display-layout change, including ones
+/// that were never visible. The window is parked outside the desktop, so this is
+/// only about not leaving a stray visible top-level window behind; it runs from
+/// the 40 ms event pump and costs two user32 calls.
+pub fn hide_keepalive_if_visible() {
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindowVisible, ShowWindow, SW_HIDE};
+
+    let raw = KEEPALIVE_HWND.load(Ordering::SeqCst);
+    if raw == 0 {
+        return;
+    }
+    let hwnd = windows::Win32::Foundation::HWND(raw as *mut _);
+    if !clipassistant_core::clipboard::hwnd_is_valid(hwnd) {
+        return;
+    }
+    unsafe {
+        if IsWindowVisible(hwnd).as_bool() {
+            log::warn!("常驻窗口被系统显示，重新隐藏");
+            let _ = ShowWindow(hwnd, SW_HIDE);
         }
     }
 }
@@ -555,5 +710,43 @@ pub fn close_update(cx: &mut App) {
                 .update(cx, |_, window, _| window.remove_window())
                 .ok();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The keep-alive window must never be able to look like an application
+    /// window: that is exactly what made it a transparent ghost frame whenever
+    /// GPUI revealed it on a display change.
+    #[test]
+    fn keepalive_is_a_hidden_offscreen_tool_window() {
+        let options = keepalive_options();
+
+        assert_eq!(options.kind, WindowKind::PopUp);
+        assert!(options.titlebar.is_none());
+        assert!(!options.show);
+        assert!(!options.focus);
+        assert!(!options.is_resizable);
+        assert!(!options.is_movable);
+        assert!(!options.is_minimizable);
+        assert_eq!(
+            options.window_background,
+            WindowBackgroundAppearance::Transparent
+        );
+
+        let Some(gpui::WindowBounds::Windowed(bounds)) = options.window_bounds else {
+            panic!("the keep-alive window must be a windowed window");
+        };
+        assert_eq!(rect_of(bounds), KEEPALIVE_RECT);
+        // Off every monitor...
+        assert!(KEEPALIVE_RECT.x + KEEPALIVE_RECT.w < 0);
+        assert!(KEEPALIVE_RECT.y + KEEPALIVE_RECT.h < 0);
+        // ...but not so small that its Direct3D surface breaks: a degenerate
+        // drawable leaves GPUI without a render target and the next frame
+        // panics.
+        assert!(KEEPALIVE_RECT.w >= 64);
+        assert!(KEEPALIVE_RECT.h >= 64);
     }
 }

@@ -16,7 +16,7 @@ mod tray;
 mod ui;
 mod windows;
 
-use gpui::{div, prelude::*, App, Application, Context, Render, Window, WindowOptions};
+use gpui::{App, Application};
 use clipassistant_core::clipboard::ClipboardMonitor;
 use clipassistant_core::hotkey::HotkeyManager;
 use clipassistant_core::model::Post;
@@ -24,18 +24,6 @@ use state::{prune_history, AppState};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-
-/// A hidden window that keeps the process alive when the panel is dismissed.
-///
-/// GPUI terminates the event loop when the last window closes, so the app keeps
-/// this invisible window registered, like the original tray-resident process.
-struct KeepAlive;
-
-impl Render for KeepAlive {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-    }
-}
 
 static MONITOR: OnceLock<ClipboardMonitor> = OnceLock::new();
 
@@ -57,17 +45,9 @@ fn main() {
         ui::text_input::bind_keys(cx);
         ui::panel::bind_keys(cx);
 
-        // Hidden keep-alive window.
-        if let Err(err) = cx.open_window(
-            WindowOptions {
-                show: false,
-                focus: false,
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| KeepAlive),
-        ) {
-            log::error!("无法创建后台窗口: {err}");
-        }
+        // Hidden keep-alive window: GPUI quits when its last window dies, so a
+        // tray-resident process still needs one (see `windows::open_keepalive`).
+        windows::open_keepalive(cx);
 
         // --- global hotkeys -------------------------------------------------
         let hotkey_queue: Arc<Mutex<Vec<i32>>> = Arc::new(Mutex::new(Vec::new()));
@@ -112,6 +92,9 @@ fn main() {
                 cx.background_executor()
                     .timer(Duration::from_millis(40))
                     .await;
+                // Cheap Win32 check; must stay outside `cx.update` because it
+                // delivers `WM_SHOWWINDOW` to the keep-alive window.
+                windows::hide_keepalive_if_visible();
                 let hotkeys: Vec<i32> = {
                     let mut guard = hk_queue.lock().unwrap();
                     std::mem::take(&mut *guard)
